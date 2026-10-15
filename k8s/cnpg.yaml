@@ -1,0 +1,35 @@
+# Postgres for weft via CloudNativePG.
+#
+# The Cluster's bootstrap generates the `weft-db-credentials` secret
+# (username/password/host/port/dbname/uri keys) for the `weft` database owned
+# by the `app` role — the app Deployment consumes the `uri` key directly, so
+# there is no secret to inject by hand.
+#
+# No barman backup is wired in v1: a fresh deployment holds seeded demo data.
+# When it becomes load-bearing, add a `barmanObjectStore` block with a
+# `retentionPolicy` plus a ScheduledBackup (the retentionPolicy is not
+# optional — without it base backups + WAL archives eventually fill the
+# storage cluster).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: weft-db
+  namespace: weft
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie
+  storage:
+    storageClass: ceph-block
+    size: 5Gi
+  bootstrap:
+    initdb:
+      database: weft
+      owner: app
+      secret:
+        name: weft-db-credentials
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 1Gi

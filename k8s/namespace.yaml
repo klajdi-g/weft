@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: weft
+  labels:
+    app.kubernetes.io/name: weft
+    app.kubernetes.io/component: application
+    environment: production

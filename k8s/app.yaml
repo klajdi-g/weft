@@ -1,0 +1,111 @@
+# Non-secret configuration for the app container. The connection string is
+# injected separately from the CNPG-generated credentials secret (see the
+# Deployment below) — CNPG's `uri` key is a valid Npgsql connection string.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: weft-app
+  namespace: weft
+data:
+  ASPNETCORE_ENVIRONMENT: Production
+  Database__Provider: postgres
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weft-app
+  namespace: weft
+  labels:
+    app: weft-app
+spec:
+  # keep at 1: migrations + seeding run at container start and must not race
+  replicas: 1
+  selector:
+    matchLabels:
+      app: weft-app
+  template:
+    metadata:
+      labels:
+        app: weft-app
+    spec:
+      containers:
+        - name: app
+          image: 10.0.0.56:5000/library/weft:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: weft-app
+          env:
+            - name: Database__ConnectionString
+              valueFrom:
+                secretKeyRef:
+                  name: weft-db-credentials
+                  key: uri
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            # first boot applies EF migrations and seeds the DB — give it the
+            # same runway the Dockerfile healthcheck start-period does
+            initialDelaySeconds: 40
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: weft-app
+  namespace: weft
+spec:
+  type: ClusterIP
+  selector:
+    app: weft-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Served through the cluster's ingress-nginx; public DNS is a wildcard to
+# cloudflared, which forwards to the ingress NodePort — no per-host tunnel
+# config needed. TLS is edge-terminated at Cloudflare; the tls block follows
+# the cluster convention (nginx serves its default cert upstream of the
+# tunnel).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: weft-app
+  namespace: weft
+  labels:
+    app: weft-app
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: weft.voltrum.co
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: weft-app
+                port:
+                  name: http
+  tls:
+    - hosts:
+        - weft.voltrum.co
+      secretName: weft-tls
